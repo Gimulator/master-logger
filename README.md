@@ -1,1 +1,2 @@
-# logger is a master that logs every action of gimulator.
+
+logger is a master that logs every action of gimulator.
