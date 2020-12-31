@@ -1,29 +1,32 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
-	"time"
-	"path/filepath"
-	"os"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"reflect"
+	"time"
 
-	"github.com/Gimulator/protobuf/go/api"
-	"google.golang.org/grpc"
-	"github.com/sirupsen/logrus"
 	"github.com/Gimulator/master-logger/s3"
+	"github.com/Gimulator/protobuf/go/api"
+	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 type Logger struct {
 	messageClient api.MessageAPIClient
 	userClient    api.UserAPIClient
-	token         string	
+	token         string
 	host          string
-	log			  *logrus.Entry
-	file		  *os.File
-	path		  string
-	filePath	  string
-	roomID	  	  string	//is roomID int ?
-
+	log           *logrus.Entry
+	file          *os.File
+	path          string
+	filePath      string
+	roomID        string
 }
 
 func (l *Logger) CreateLogger() (*Logger, error) {
@@ -32,7 +35,7 @@ func (l *Logger) CreateLogger() (*Logger, error) {
 		return nil, err
 	}
 
-	filePath= filepath.Join(l.path, l.roomID)
+	l.filePath = filepath.Join(l.path, l.roomID)
 
 	l.file, err = os.Create(l.roomID)
 	if err != nil {
@@ -94,7 +97,7 @@ func (l *Logger) Watch() error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	ctx = l.appendMetadata(ctx)
-	
+
 	key := &api.Key{
 		Type:      "",
 		Name:      "",
@@ -111,10 +114,11 @@ func (l *Logger) Watch() error {
 	return nil
 }
 
-func (l *Logger) watchReceiver(stream api.MessageAPI_WatchClient) {
+func (l *Logger) watchReceiver(stream api.MessageAPI_WatchClient) error {
+	foo := &api.Result{}
 	for {
 		mes, err := stream.Recv()
-		if err != nil{
+		if err != nil {
 			return err
 		}
 		_, err = l.file.WriteString(fmt.Sprintf("%v\n", mes))
@@ -125,20 +129,20 @@ func (l *Logger) watchReceiver(stream api.MessageAPI_WatchClient) {
 			l.log.WithError(err).Error("error while receiving message")
 			continue
 		}
-		if mes.Key.Type == api.Result {
+		if reflect.TypeOf(mes) == reflect.TypeOf(foo) { //not develop
 			gzipit(l.filePath, l.path)
 			l.log.Info("starting to upload ...")
-			err := s3.Upload(logFile, l.roomID +".gz")
+			err := s3.Upload(l.path, l.roomID+".gz")
 			if err != nil {
 				l.log.WithError(err).Error("error while uploading")
 				return err
 			}
 			return nil
 		}
+	}
 
 	return nil
 }
-
 
 func (l *Logger) appendMetadata(ctx context.Context) context.Context {
 	data := make(map[string]string)
@@ -172,8 +176,7 @@ func gzipit(source, target string) error {
 	return err
 }
 
-
-func track()  error{
+func track() error {
 	l := &Logger{}
 	l, err := l.CreateLogger()
 	if err != nil {
@@ -182,16 +185,15 @@ func track()  error{
 	}
 
 	l.log.Info("starting to watch ...")
-	err = l.Watch() 
+	err = l.Watch()
 	if err != nil {
 		l.log.WithError(err).Error("error while watching")
 		return err
 	}
 
-	return  nil
+	return nil
 }
 
-
 func main() {
-	track() 	
+	track()
 }
