@@ -93,7 +93,7 @@ func (l *Logger) connect() error {
 }
 
 func (l *Logger) Watch() error {
-	var timeout = time.Second * 100
+	var timeout = time.Second * 10
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	ctx = l.appendMetadata(ctx)
@@ -129,7 +129,7 @@ func (l *Logger) watchReceiver(stream api.MessageAPI_WatchClient) error {
 			l.log.WithError(err).Error("error while receiving message")
 			continue
 		}
-		if reflect.TypeOf(mes) == reflect.TypeOf(foo) { //not develop
+		if reflect.TypeOf(mes) == reflect.TypeOf(foo) {
 			gzipit(l.filePath, l.path)
 			l.log.Info("starting to upload ...")
 			err := s3.Upload(l.path, l.roomID+".gz")
