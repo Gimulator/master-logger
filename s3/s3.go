@@ -34,7 +34,6 @@ func NewS3(filePath, fileName string) error {
 	for i := 1; i < 4; i++ {
 		i++
 		s.Client, err = minio.New(s.endpoint, s.accessKeyID, s.secretAccessKey, false)
-		//TODO: make a wrapper for s3 to create a channel for checking s3 errors,and wait to get connected.
 		if err != nil {
 			s.log.WithError(err).Error("could not connect to S3, retrying ")
 			continue
@@ -83,7 +82,7 @@ func (s S3) NewProgressBar(fileName string) (*minio.Object, int64) {
 	// the Reads inside.
 	progress := pb.New64(objectInfo.Size)
 	progress.Start()
-	s.IsUploadFinished = progress.IsFinished()
+	//s.IsUploadFinished = progress.IsFinished()
 	return reader, objectInfo.Size
 }
 
