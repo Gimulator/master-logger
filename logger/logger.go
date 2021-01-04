@@ -37,8 +37,9 @@ func (l *Logger) NewLogger() (*Logger, error) {
 	log.Formatter = &logrus.TextFormatter{
 		CallerPrettyfier: func(f *runtime.Frame) (string, string) {
 			return fmt.Sprintf("%s()", f.Function), fmt.Sprintf("%s:%d", f.File, f.Line)
-		},
+		}, //TODO: add logWithfield,search the best format
 	}
+
 	err := l.getEnv()
 	if err != nil {
 		return nil, err
@@ -167,7 +168,7 @@ func (l *Logger) appendMetadata(ctx context.Context) context.Context {
 	return ctx
 }
 
-func gzipit(source, target string) error {
+func gzipit(source, target string) error { //TODO: move this func to a tools file or sth
 	reader, err := os.Open(source)
 	if err != nil {
 		return err
