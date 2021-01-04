@@ -44,10 +44,10 @@ func (l *Logger) NewLogger() (*Logger, error) {
 	if err != nil {
 		return nil, err
 	}
-	//makes the logfile fullname by conjuncting directory and roomID
+	//makes the logfile fullname by conjuncting directory and roomID eg. /etc/5623
 	l.filePath = l.path + "/" + l.roomID
 
-	l.file, err = os.Create(l.roomID)
+	l.file, err = os.Create(l.filePath)
 	if err != nil {
 		return nil, err
 	}
