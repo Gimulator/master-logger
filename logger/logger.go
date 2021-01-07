@@ -151,7 +151,7 @@ func (l *Logger) watchReceiver(stream api.MessageAPI_WatchClient) error { //rena
 			continue
 		}
 
-		_, writeErr := l.file.WriteString(fmt.Sprintf("%v\n", mes))
+		_, writeErr := l.file.WriteString(fmt.Sprintf("%v\n", mes)) //TODO: preappend timestamp and stuff
 
 		if writeErr != nil {
 			l.log.WithError(err).Error("error while writing to logfile")

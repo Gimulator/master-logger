@@ -29,7 +29,7 @@ func init() {
 	logrus.SetFormatter(formatter)
 }
 
-func gzipit(source, target string) error { //TODO: move this func to a tools file or sth
+func gzipit(source, target string) error {
 	reader, err := os.Open(source)
 	if err != nil {
 		return err
