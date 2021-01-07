@@ -1,13 +1,9 @@
 package logger
 
 import (
-	"compress/gzip"
 	"context"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
-	"runtime"
 	"time"
 
 	"github.com/Gimulator/master-logger/s3"
@@ -22,41 +18,41 @@ type Logger struct {
 	userClient    api.UserAPIClient
 	token         string
 	host          string
+	endKey        string
 	log           *logrus.Entry
 	file          *os.File
 	path          string
 	filePath      string
 	roomID        string
-	Ch            chan string
+	Ch            chan string //TODO: do sth wiser about channel stuff
+	ErrChan       chan error
+}
+
+type UploadResult struct {
+	EndUpload string
+	UploadErr error
 }
 
 func (l *Logger) NewLogger() (*Logger, error) {
-
-	log := logrus.New()
-	log.SetReportCaller(true)
-	log.Formatter = &logrus.TextFormatter{
-		CallerPrettyfier: func(f *runtime.Frame) (string, string) {
-			return fmt.Sprintf("%s()", f.Function), fmt.Sprintf("%s:%d", f.File, f.Line)
-		}, //TODO: add logWithfield,search the best format
-	}
 
 	err := l.getEnv()
 	if err != nil {
 		return nil, err
 	}
-	//makes the logfile fullname by conjuncting directory and roomID eg. /etc/5623
-	l.filePath = l.path + "/" + l.roomID
+	//makes the logfile fullname by conjuncting directory and roomID, eg. /etc + / + 5623 + .log = /etc/5623.log
+	l.filePath = l.path + "/" + l.roomID + ".log"
 
 	l.file, err = os.Create(l.filePath)
 	if err != nil {
 		return nil, err
 	}
 
+	l.Ch = make(chan string, 0)
+	l.ErrChan = make(chan error, 0)
+
 	if err := l.connect(); err != nil {
 		return nil, err
 	}
-
-	l.Ch = make(chan string)
 
 	return l, nil
 }
@@ -82,16 +78,24 @@ func (l *Logger) getEnv() error {
 		return fmt.Errorf("environment variable GIMULATOR_TOKEN is not set")
 	}
 
+	l.endKey = os.Getenv("END_ROOM_KEY")
+	if l.endKey == "" {
+		return fmt.Errorf("environment variable END_ROOM_KEY is not set")
+	}
 	return nil
 }
 
 func (l *Logger) connect() error {
-	var waitTime = time.Second * 5
-	for {
+	var dialWaitTime = time.Second * 5
+
+	for i := 1; i < 4; i++ {
+
 		conn, err := grpc.Dial(l.host)
+		time.Sleep(dialWaitTime)
+
 		if err != nil {
 			l.log.WithError(err).Error("could not connect to Gimulator, retrying")
-			time.Sleep(waitTime)
+
 			continue
 		}
 
@@ -106,9 +110,11 @@ func (l *Logger) connect() error {
 }
 
 func (l *Logger) Watch() error {
-	var timeout = time.Second * 10
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	var ctxTimeout = time.Second * 2
+	ctx, cancel := context.WithTimeout(context.Background(), ctxTimeout)
 	defer cancel()
+
+	time.Sleep(ctxTimeout)
 	ctx = l.appendMetadata(ctx)
 
 	key := &api.Key{
@@ -123,39 +129,71 @@ func (l *Logger) Watch() error {
 	}
 
 	go l.watchReceiver(stream)
+
 	select {
-	case l.Ch <- "end":
+	case res := <-l.Ch:
 		close(l.Ch)
+		close(l.ErrChan)
+		println(res)
 		return nil
+	case err := <-l.ErrChan:
+		close(l.ErrChan)
+		close(l.Ch)
+		return err
 	}
 }
 
-func (l *Logger) watchReceiver(stream api.MessageAPI_WatchClient) error {
-	//resultType := &api.Result{}
+func (l *Logger) watchReceiver(stream api.MessageAPI_WatchClient) error { //rename this func
 	for {
 		mes, err := stream.Recv()
 		if err != nil {
-			l.log.WithError(err).Error("could not receive the message to log, retrying ... ")
+			l.log.WithError(err).Error("could not receive this message, retrying ... ")
 			continue
 		}
 
 		_, writeErr := l.file.WriteString(fmt.Sprintf("%v\n", mes))
 
 		if writeErr != nil {
-			l.log.WithError(err).Error("error while writing message to logfile")
+			l.log.WithError(err).Error("error while writing to logfile")
 		}
-		if mes.Key.Type == "result" { //??
-			gzipit(l.filePath, l.path)
-			l.log.Info("starting to upload ...")
-			err := s3.NewS3(l.path, l.roomID+".gz")
+
+		if mes.Key.Type == l.endKey {
+
+			err := l.prepAndUpload()
 			if err != nil {
-				l.log.WithError(err).Error("error while uploading")
 				return err
 			}
-			l.Ch <- "end"
-			return nil
 		}
 	}
+}
+
+func (l *Logger) prepAndUpload() error { //rename this func
+	err := gzipit(l.filePath, l.path)
+	if err != nil {
+		l.log.WithError(err).Error("error while zipping, starting to upload the unzipped logfile to s3")
+
+		errCh := s3.NewS3(l.path, l.roomID+".log")
+		if errCh != nil {
+			l.log.WithError(errCh).Fatal("error occured while uploading logfile to s3")
+			l.ErrChan <- errCh
+			return errCh
+		}
+
+		l.Ch <- "end"
+		return nil
+	}
+
+	l.log.Info("starting to upload to s3")
+	errCh := s3.NewS3(l.path, l.roomID+".log.gz")
+	if errCh != nil {
+		l.log.WithError(errCh).Fatal("error occured while uploading logfile to s3")
+		l.ErrChan <- errCh
+		return errCh
+	}
+
+	l.Ch <- "end"
+	return nil
+
 }
 
 func (l *Logger) appendMetadata(ctx context.Context) context.Context {
@@ -168,28 +206,6 @@ func (l *Logger) appendMetadata(ctx context.Context) context.Context {
 	return ctx
 }
 
-func gzipit(source, target string) error { //TODO: move this func to a tools file or sth
-	reader, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-
-	filename := filepath.Base(source)
-	target = filepath.Join(target, fmt.Sprintf("%s.gz", filename))
-	writer, err := os.Create(target)
-	if err != nil {
-		return err
-	}
-	defer writer.Close()
-
-	archiver := gzip.NewWriter(writer)
-	archiver.Name = filename
-	defer archiver.Close()
-
-	_, err = io.Copy(archiver, reader)
-	return err
-}
-
 func Track() error {
 	l := &Logger{}
 
@@ -199,7 +215,7 @@ func Track() error {
 		return err
 	}
 
-	if err = l.Watch(); err != nil {
+	if err := l.Watch(); err != nil {
 		return err
 	}
 
