@@ -32,7 +32,6 @@ func NewS3(filePath, fileName string) error {
 	}
 	var err error
 	for i := 1; i < 4; i++ {
-		i++
 		s.Client, err = minio.New(s.endpoint, s.accessKeyID, s.secretAccessKey, false)
 		if err != nil {
 			s.log.WithError(err).Error("could not connect to S3, retrying ")
